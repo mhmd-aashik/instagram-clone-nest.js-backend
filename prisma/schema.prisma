@@ -1,0 +1,74 @@
+
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/prisma/generated"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String?
+  profilePicture String?
+  bio String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  // One to many relation with RefreshToken
+  refreshTokens     RefreshToken[]
+  // One to many relation with PasswordResetToken
+  passwordResetTokens PasswordResetToken[]
+
+  // Map -> Table name
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  jti       String   @unique @default(uuid())
+  userId    String
+  expiresAt DateTime
+  isRevoked Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relation
+  // One to one relation with User
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Indexes
+  @@index([userId])
+  @@index([jti])
+
+  // Map -> Table name
+  @@map("refresh_tokens")
+}
+
+model PasswordResetToken {
+  id          String   @id @default(uuid())
+  userId      String
+  hashedToken String
+  expiresAt   DateTime
+  isUsed      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relation
+  // One to one relation with User
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Indexes
+  @@index([userId])
+  @@index([hashedToken])
+
+  // Map -> Table name
+  @@map("password_reset_tokens")
+}
