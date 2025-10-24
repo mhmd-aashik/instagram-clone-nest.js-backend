@@ -1,11 +1,22 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import * as bcrypt from 'bcrypt';
-import { RegisterInputTypes } from './types/register.types';
+import { LoginInputTypes, RegisterInputTypes } from './types/register.types';
+import { v4 as uuidv4 } from 'uuid';
+import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class AuthService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly jwtService: JwtService,
+    private readonly configService: ConfigService,
+  ) {}
 
   async register(registerInput: RegisterInputTypes) {
     const { email, password, name } = registerInput;
@@ -41,10 +52,132 @@ export class AuthService {
       },
     });
 
-    console.log(newUser);
+    // Generate JWT tokens
+    const tokens = await this.generateTokens(newUser.id);
+
     return {
-      message: 'User created successfully',
-      user: newUser,
+      message: 'Registration successful! Welcome to our platform.',
+      user: {
+        id: newUser.id,
+        email: newUser.email,
+        name: newUser.name,
+      },
+      ...tokens,
+    };
+  }
+
+  async login(loginInput: LoginInputTypes) {
+    const { email, password } = loginInput;
+
+    // Find user
+    const user = await this.prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    // Verify password
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+
+    if (!isPasswordValid) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    // Generate tokens
+    const tokens = await this.generateTokens(user.id);
+
+    return {
+      message: 'Login successful!',
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+      },
+      ...tokens,
+    };
+  }
+
+  async refreshToken(refreshToken: string) {
+    try {
+      // verify refresh token
+      const payload = this.jwtService.verify(refreshToken, {
+        secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
+      }) as unknown as { sub: string; jti: string };
+
+      // Check if refresh token exists in database and is not revoked
+      const storeToken = await this.prisma.refreshToken.findUnique({
+        where: {
+          jti: payload.jti,
+        },
+      });
+
+      if (!storeToken) {
+        throw new UnauthorizedException('Invalid refresh token');
+      }
+
+      if (storeToken.isRevoked) {
+        throw new UnauthorizedException('Refresh token has been revoked');
+      }
+
+      if (storeToken.expiresAt < new Date()) {
+        throw new UnauthorizedException('Refresh token has expired');
+      }
+
+      await this.prisma.refreshToken.update({
+        where: {
+          id: storeToken.id,
+        },
+        data: {
+          isRevoked: true,
+        },
+      });
+
+      // generate new tokens
+      const newAccessToken = await this.generateTokens(payload.sub);
+
+      return {
+        message: 'Token refreshed successfully',
+        ...newAccessToken,
+      };
+    } catch (error) {
+      console.error(error);
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+  }
+
+  private async generateTokens(userId: string) {
+    const jti = uuidv4();
+
+    // create access token using configured JWT module
+    // sub is the subject of the token, which is the user id
+    const accessToken = this.jwtService.sign({
+      sub: userId,
+    });
+
+    // Create refresh token with jti
+    const refreshToken = this.jwtService.sign({
+      sub: userId,
+      jti,
+    });
+
+    // set refresh token expires at to 30 days
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 30);
+
+    // create refresh token in database
+    await this.prisma.refreshToken.create({
+      data: {
+        jti,
+        userId,
+        expiresAt,
+      },
+    });
+
+    return {
+      accessToken,
+      refreshToken,
     };
   }
 }

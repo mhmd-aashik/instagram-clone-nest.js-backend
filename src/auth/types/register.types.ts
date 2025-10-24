@@ -3,3 +3,8 @@ export interface RegisterInputTypes {
   password: string;
   name?: string;
 }
+
+export interface LoginInputTypes {
+  email: string;
+  password: string;
+}
