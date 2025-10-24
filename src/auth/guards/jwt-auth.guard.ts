@@ -9,6 +9,22 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Request } from 'express';
 
+interface JwtPayload {
+  sub: string;
+  iat?: number;
+  exp?: number;
+}
+
+// Type guard to check if a value is a valid JWT payload
+function isJwtPayload(value: unknown): value is JwtPayload {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'sub' in value &&
+    typeof (value as { sub: unknown }).sub === 'string'
+  );
+}
+
 interface AuthenticatedRequest extends Request {
   user: {
     id: string;
@@ -27,6 +43,22 @@ export class JwtAuthGuard implements CanActivate {
     private readonly prisma: PrismaService,
   ) {}
 
+  private verifyJwtToken(token: string): JwtPayload {
+    try {
+      const payload: JwtPayload = this.jwtService.verify(token, {
+        secret: this.configService.get<string>('JWT_ACCESS_SECRET'),
+      });
+
+      if (isJwtPayload(payload)) {
+        return payload;
+      }
+
+      throw new Error('Invalid token payload structure');
+    } catch {
+      throw new UnauthorizedException('Invalid token');
+    }
+  }
+
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const token = this.extractTokenFromHeader(request);
@@ -36,9 +68,7 @@ export class JwtAuthGuard implements CanActivate {
     }
 
     try {
-      const payload = this.jwtService.verify(token, {
-        secret: this.configService.get<string>('JWT_ACCESS_SECRET'),
-      });
+      const payload = this.verifyJwtToken(token);
 
       // Fetch user from database to ensure they still exist
       const user = await this.prisma.user.findUnique({
