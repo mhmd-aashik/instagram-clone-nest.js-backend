@@ -349,7 +349,12 @@ export class AuthService {
 
   async getMyId(id: string) {
     const user = await this.prisma.user.findUnique({
-      where: { id },
+      omit: {
+        password: true,
+      },
+      where: {
+        id,
+      },
     });
     return {
       message: 'User information retrieved successfully',
