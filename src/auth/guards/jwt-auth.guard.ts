@@ -45,7 +45,8 @@ export class JwtAuthGuard implements CanActivate {
 
   private verifyJwtToken(token: string): JwtPayload {
     try {
-      const payload: JwtPayload = this.jwtService.verify(token, {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      const payload = this.jwtService.verify(token, {
         secret: this.configService.get<string>('JWT_ACCESS_SECRET'),
       });
 
