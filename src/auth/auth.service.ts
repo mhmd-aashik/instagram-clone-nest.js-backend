@@ -330,4 +330,30 @@ export class AuthService {
       refreshToken,
     };
   }
+
+  async getAllUsers() {
+    const users = await this.prisma.user.findMany({
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+    return {
+      message: 'Users retrieved successfully',
+      users,
+    };
+  }
+
+  async getMyId(id: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+    });
+    return {
+      message: 'User information retrieved successfully',
+      user,
+    };
+  }
 }
