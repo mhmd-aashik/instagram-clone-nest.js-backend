@@ -1,11 +1,16 @@
 import {
   ConflictException,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import * as bcrypt from 'bcrypt';
-import { LoginInputTypes, RegisterInputTypes } from './types/register.types';
+import {
+  LoginInputTypes,
+  RegisterInputTypes,
+  ResetPasswordInputTypes,
+} from './types';
 import { v4 as uuidv4 } from 'uuid';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -96,6 +101,151 @@ export class AuthService {
         name: user.name,
       },
       ...tokens,
+    };
+  }
+
+  async logout(refreshToken: string) {
+    // Find and revoke the refresh token
+    await this.prisma.refreshToken.updateMany({
+      where: {
+        jti: refreshToken,
+        isRevoked: false,
+      },
+      data: {
+        isRevoked: true,
+      },
+    });
+
+    return {
+      message: 'Logout successful! You have been signed out.',
+    };
+  }
+
+  async requestPasswordReset(email: string) {
+    // Find user
+    const user = await this.prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Generate reset token
+    const resetToken = uuidv4();
+    const hashedToken = await bcrypt.hash(resetToken, 10);
+
+    // Store reset token in database
+    const expiresAt = new Date();
+    expiresAt.setMinutes(expiresAt.getMinutes() + 15); // 15 minutes expiry
+
+    await this.prisma.passwordResetToken.create({
+      data: {
+        userId: user.id,
+        hashedToken,
+        expiresAt,
+      },
+    });
+
+    return {
+      message: 'Password reset email sent successfully',
+      token: resetToken,
+      expiresAt: expiresAt.toISOString(),
+    };
+  }
+
+  async resendPasswordReset(email: string) {
+    // Find user
+    const user = await this.prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Invalidate all existing reset tokens for this user
+    await this.prisma.passwordResetToken.updateMany({
+      where: {
+        userId: user.id,
+        isUsed: false,
+      },
+      data: {
+        isUsed: true,
+      },
+    });
+
+    // Generate new reset token
+    const resetToken = uuidv4();
+    const hashedToken = await bcrypt.hash(resetToken, 10);
+
+    // Store new reset token in database
+    const expiresAt = new Date();
+    expiresAt.setMinutes(expiresAt.getMinutes() + 15); // 15 minutes expiry
+
+    await this.prisma.passwordResetToken.create({
+      data: {
+        userId: user.id,
+        hashedToken,
+        expiresAt,
+      },
+    });
+
+    return {
+      message: 'New password reset email sent successfully',
+      token: resetToken,
+      expiresAt: expiresAt.toISOString(),
+    };
+  }
+
+  async resetPassword(resetPasswordInput: ResetPasswordInputTypes) {
+    const { token, newPassword } = resetPasswordInput;
+
+    // find all non-expired,non-used reset password tokens
+    const resetTokens = await this.prisma.passwordResetToken.findMany({
+      where: {
+        isUsed: false,
+        expiresAt: {
+          gt: new Date(),
+        },
+      },
+      include: {
+        user: true,
+      },
+    });
+
+    // Find the matching token by comparing hashed tokens
+    let matchedToken: (typeof resetTokens)[0] | null = null;
+    for (const storedToken of resetTokens) {
+      const isMatch = await bcrypt.compare(token, storedToken.hashedToken);
+
+      if (isMatch) {
+        matchedToken = storedToken;
+        break;
+      }
+    }
+
+    if (!matchedToken) {
+      throw new UnauthorizedException(
+        'Invalid or expired reset password token',
+      );
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    // update user password
+    await this.prisma.user.update({
+      where: {
+        id: matchedToken.user.id,
+      },
+      data: {
+        password: hashedPassword,
+      },
+    });
+
+    return {
+      message: 'Password reset successful',
     };
   }
 
