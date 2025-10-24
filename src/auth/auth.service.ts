@@ -307,10 +307,16 @@ export class AuthService {
     });
 
     // Create refresh token with jti
-    const refreshToken = this.jwtService.sign({
-      sub: userId,
-      jti,
-    });
+    const refreshToken = this.jwtService.sign(
+      {
+        sub: userId,
+        jti,
+      },
+      {
+        secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
+        expiresIn: '30d',
+      },
+    );
 
     // set refresh token expires at to 30 days
     const expiresAt = new Date();
